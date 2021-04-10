@@ -110,7 +110,7 @@ def infer(net, img, scales, base_height, stride, pad_value=(0, 0, 0), img_mean=(
     return avg_heatmaps, avg_pafs
 
 
-def evaluate(labels, output_name, images_folder, net, multiscale=False, visualize=False):
+def evaluate(labels, output_name, images_folder, net, multiscale=False, visualize=False, test = False):
     net = net.cuda().eval()
     base_height = 368
     scales = [1]
@@ -153,6 +153,8 @@ def evaluate(labels, output_name, images_folder, net, multiscale=False, visualiz
             key = cv2.waitKey()
             if key == 27:  # esc
                 return
+        if test:
+            break
 
     with open(output_name, 'w') as f:
         json.dump(coco_result, f, indent=4)
@@ -169,10 +171,19 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint-path', type=str, required=True, help='path to the checkpoint')
     parser.add_argument('--multiscale', action='store_true', help='average inference results over multiple scales')
     parser.add_argument('--visualize', action='store_true', help='show keypoints')
+    
+    ###
+    parser.add_argument('--test', type=bool, default=False)
+    ###
+    
     args = parser.parse_args()
 
     net = PoseEstimationWithMobileNet()
     checkpoint = torch.load(args.checkpoint_path)
     load_state(net, checkpoint)
 
-    evaluate(args.labels, args.output_name, args.images_folder, net, args.multiscale, args.visualize)
+    evaluate(args.labels, args.output_name, args.images_folder, net, args.multiscale, args.visualize, 
+            
+            test = args.test
+             
+            )

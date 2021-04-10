@@ -22,7 +22,11 @@ cv2.ocl.setUseOpenCL(False)  # To prevent freeze of DataLoader
 
 def train(prepared_train_labels, train_images_folder, num_refinement_stages, base_lr, batch_size, batches_per_iter,
           num_workers, checkpoint_path, weights_only, from_mobilenet, checkpoints_folder, log_after,
-          val_labels, val_images_folder, val_output_name, checkpoint_after, val_after):
+          val_labels, val_images_folder, val_output_name, checkpoint_after, val_after,
+         
+          test = False
+         
+         ):
     net = PoseEstimationWithMobileNet(num_refinement_stages)
 
     stride = 8
@@ -36,7 +40,11 @@ def train(prepared_train_labels, train_images_folder, num_refinement_stages, bas
                                    Rotate(pad=(128, 128, 128)),
                                    CropPad(pad=(128, 128, 128)),
                                    Flip()]))
-    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    train_loader = DataLoader(dataset, shuffle=True,
+                              batch_size = 1,
+                              num_workers = 1
+                             
+                             )
 
     optimizer = optim.Adam([
         {'params': get_parameters_conv(net.model, 'weight')},
@@ -71,10 +79,12 @@ def train(prepared_train_labels, train_images_folder, num_refinement_stages, bas
                 num_iter = checkpoint['iter']
                 current_epoch = checkpoint['current_epoch']
 
-    net = DataParallel(net).cuda()
+#     net = DataParallel(net).cuda()
+    net.cuda()
     net.train()
-    for epochId in range(current_epoch, 280):
-        scheduler.step()
+    
+    max_epoch = 280 if test is False else current_epoch + 1
+    for epochId in range(current_epoch, max_epoch):
         total_losses = [0, 0] * (num_refinement_stages + 1)  # heatmaps loss, paf loss per stage
         batch_per_iter_idx = 0
         for batch_data in train_loader:
@@ -104,6 +114,7 @@ def train(prepared_train_labels, train_images_folder, num_refinement_stages, bas
             batch_per_iter_idx += 1
             if batch_per_iter_idx == batches_per_iter:
                 optimizer.step()
+                scheduler.step()
                 batch_per_iter_idx = 0
                 num_iter += 1
             else:
@@ -129,6 +140,8 @@ def train(prepared_train_labels, train_images_folder, num_refinement_stages, bas
                 print('Validation...')
                 evaluate(val_labels, val_output_name, val_images_folder, net)
                 net.train()
+            if test:
+                break
 
 
 if __name__ == '__main__':
@@ -158,6 +171,11 @@ if __name__ == '__main__':
                         help='number of iterations to save checkpoint')
     parser.add_argument('--val-after', type=int, default=5000,
                         help='number of iterations to run validation')
+    
+    ###
+    parser.add_argument('--test', type=bool, default=False)
+    ###
+    
     args = parser.parse_args()
 
     checkpoints_folder = '{}_checkpoints'.format(args.experiment_name)
@@ -167,4 +185,8 @@ if __name__ == '__main__':
     train(args.prepared_train_labels, args.train_images_folder, args.num_refinement_stages, args.base_lr, args.batch_size,
           args.batches_per_iter, args.num_workers, args.checkpoint_path, args.weights_only, args.from_mobilenet,
           checkpoints_folder, args.log_after, args.val_labels, args.val_images_folder, args.val_output_name,
-          args.checkpoint_after, args.val_after)
+          args.checkpoint_after, args.val_after,
+         
+          test = args.test
+           
+         )
