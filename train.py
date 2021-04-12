@@ -42,7 +42,7 @@ def train(prepared_train_labels, train_images_folder, num_refinement_stages, bas
                                    Flip()]))
     train_loader = DataLoader(dataset, shuffle=True,
                               batch_size = 1,
-                              num_workers = 1
+                              num_workers = 0
                              
                              )
 
@@ -84,6 +84,8 @@ def train(prepared_train_labels, train_images_folder, num_refinement_stages, bas
     net.train()
     
     max_epoch = 280 if test is False else current_epoch + 1
+    print(current_epoch, max_epoch)
+    count = 0
     for epochId in range(current_epoch, max_epoch):
         total_losses = [0, 0] * (num_refinement_stages + 1)  # heatmaps loss, paf loss per stage
         batch_per_iter_idx = 0
@@ -130,7 +132,7 @@ def train(prepared_train_labels, train_images_folder, num_refinement_stages, bas
                     total_losses[loss_idx] = 0
             if num_iter % checkpoint_after == 0:
                 snapshot_name = '{}/checkpoint_iter_{}.pth'.format(checkpoints_folder, num_iter)
-                torch.save({'state_dict': net.module.state_dict(),
+                torch.save({'state_dict': net.model.state_dict(), # net.module
                             'optimizer': optimizer.state_dict(),
                             'scheduler': scheduler.state_dict(),
                             'iter': num_iter,
@@ -140,9 +142,9 @@ def train(prepared_train_labels, train_images_folder, num_refinement_stages, bas
                 print('Validation...')
                 evaluate(val_labels, val_output_name, val_images_folder, net)
                 net.train()
-            if test:
-                break
-
+            count += 1
+        if count == 2:
+            break
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

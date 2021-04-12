@@ -110,7 +110,7 @@ def infer(net, img, scales, base_height, stride, pad_value=(0, 0, 0), img_mean=(
     return avg_heatmaps, avg_pafs
 
 
-def evaluate(labels, output_name, images_folder, net, multiscale=False, visualize=False, test = False):
+def evaluate(labels, output_name, images_folder, net, multiscale=False, visualize=False):
     net = net.cuda().eval()
     base_height = 368
     scales = [1]
@@ -123,14 +123,13 @@ def evaluate(labels, output_name, images_folder, net, multiscale=False, visualiz
     for sample in dataset:
         file_name = sample['file_name']
         img = sample['img']
-
+        
         avg_heatmaps, avg_pafs = infer(net, img, scales, base_height, stride)
-
         total_keypoints_num = 0
         all_keypoints_by_type = []
         for kpt_idx in range(18):  # 19th for bg
             total_keypoints_num += extract_keypoints(avg_heatmaps[:, :, kpt_idx], all_keypoints_by_type, total_keypoints_num)
-
+        
         pose_entries, all_keypoints = group_keypoints(all_keypoints_by_type, avg_pafs)
 
         coco_keypoints, scores = convert_to_coco_format(pose_entries, all_keypoints)
@@ -153,8 +152,6 @@ def evaluate(labels, output_name, images_folder, net, multiscale=False, visualiz
             key = cv2.waitKey()
             if key == 27:  # esc
                 return
-        if test:
-            break
 
     with open(output_name, 'w') as f:
         json.dump(coco_result, f, indent=4)
@@ -171,19 +168,10 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint-path', type=str, required=True, help='path to the checkpoint')
     parser.add_argument('--multiscale', action='store_true', help='average inference results over multiple scales')
     parser.add_argument('--visualize', action='store_true', help='show keypoints')
-    
-    ###
-    parser.add_argument('--test', type=bool, default=False)
-    ###
-    
     args = parser.parse_args()
 
     net = PoseEstimationWithMobileNet()
     checkpoint = torch.load(args.checkpoint_path)
     load_state(net, checkpoint)
 
-    evaluate(args.labels, args.output_name, args.images_folder, net, args.multiscale, args.visualize, 
-            
-            test = args.test
-             
-            )
+    evaluate(args.labels, args.output_name, args.images_folder, net, args.multiscale, args.visualize)
