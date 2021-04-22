@@ -44,23 +44,46 @@ class Profiler(nn.Module):
         self.data = defaultdict(list)
         for name, module in self.model._modules.items():
             self.data[name] = module.gpu_time
+    
+    def _get_stats(self):
+        """
+        Возвращает статистики, вычисленные по результатам профилировки
+        """
+        if self.data is None:
+            raise RuntimeError("Метод collect_data не был вызван.")
         
+        means = [np.mean(v) for _, v in self.data.items()]
+        stds = [np.std(v) for _, v in self.data.items()]
+        self.total_time = np.sum(means)
+        return means, stds
+    
+    def save_table(self, filename):
+        """
+        Сохраняет таблицу в файл с именем filename.txt
+        """
+        if self.data is None:
+            raise RuntimeError("Метод collect_data не был вызван.")
+        means, stds = self._get_stats()
+        
+        with open(filename + ".txt", "w") as f:
+            f.write(self.model_name)
+            for i, k in enumerate(self.data.keys()):
+                f.write(f"{k:<15} mean: {means[i] * 1000:<7.2f} ms, \tstd: {stds[i] * 1000:<7.2f} ms, \tpercent: {means[i] / self.total_time * 100:<7.2f}%")
+            f.write(f"Total time: {self.total_time * 1000:.2f} ms")
+            
     def show_table(self):
         """
         Показывает таблицу результатов профилировки
         """
         if self.data is None:
             raise RuntimeError("Метод collect_data не был вызван.")
-
-        means = [np.mean(v) for _, v in self.data.items()]
-        stds = [np.std(v) for _, v in self.data.items()]
-        total = np.sum(means)
+        means, stds = self._get_stats()
         
         print(self.model_name)
         for i, k in enumerate(self.data.keys()):
-            print(f"{k:<15} mean: {means[i] * 1000:<7.2f} ms, \tstd: {stds[i] * 1000:<7.2f} ms, \tpercent: {means[i] / total * 100:<7.2f}%")
-        print(f"Total time: {total * 1000:.2f} ms")
-        self.total_time = total  # сохраняем общее время выполнения
+            print(f"{k:<15} mean: {means[i] * 1000:<7.2f} ms, \tstd: {stds[i] * 1000:<7.2f} ms, \tpercent: {means[i] / self.total_time * 100:<7.2f}%")
+        print(f"Total time: {self.total_time * 1000:.2f} ms")
+        
         
     def plot_results(self):
         """

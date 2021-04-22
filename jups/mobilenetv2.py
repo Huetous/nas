@@ -12,11 +12,17 @@ def _make_divisible(v, divisor, min_value = None):
     return new_v
 
 class ConvBNReLU(nn.Sequential):
-    def __init__(self, in_channels, out_channels, kernel_size = 3, stride = 1, padding = 0, dilation = 1, groups = 1):
-        padding = (kernel_size - 1) // 2 * dilation
+    def __init__(self, in_channels, out_channels, kernel_size = 3, stride = 1, padding = None, dilation = 1, groups = 1):
+        if padding is None:
+            padding = (kernel_size - 1) // 2 * dilation
         super().__init__(
-                nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, 
-                          dilation = dilation, groups = groups, bias = False),
+                nn.Conv2d(in_channels, out_channels, 
+                          kernel_size = kernel_size,
+                          stride = stride,
+                          padding = padding, 
+                          dilation = dilation, 
+                          groups = groups,
+                          bias = False),
                 nn.BatchNorm2d(out_channels),
                 nn.ReLU6(inplace = True)
          )
@@ -28,17 +34,23 @@ class ConvBNReLU(nn.Sequential):
             
 # @register_searchable_op("MIB", short_args)
 class InvertedResidual(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, expand_ratio = 1):
+    def __init__(self, in_channels, out_channels, stride, dilation, padding, expand_ratio = 1):
         super().__init__()
+        
         mid_channels = int(round(in_channels * expand_ratio))
+        
         self.use_skip_connection = stride == 1 and in_channels == out_channels
         layers = []
         
         if expand_ratio > 1:
             layers.append(ConvBNReLU(in_channels, mid_channels, kernel_size = 1))
-        
+            
         layers.extend([
-            ConvBNReLU(mid_channels, mid_channels, stride = stride, groups = mid_channels),
+            ConvBNReLU(mid_channels, mid_channels, 
+                       stride = stride, 
+                       padding = padding, 
+                       dilation = dilation,
+                       groups = mid_channels),
             nn.Conv2d(mid_channels, out_channels, 1, 1, 0, bias = False),
             nn.BatchNorm2d(out_channels),
         ])
@@ -53,19 +65,6 @@ class MobileNetV2(nn.Module):
     def __init__(self, in_channels, last_channels, num_classes = 1000, width_mult = 1.0, inverted_residual_setting = None,
                  round_nearest= 8, include_classifier = False):
         super().__init__()
-
-        if inverted_residual_setting is None:
-            inverted_residual_setting = [
-                # t, c, n, s
-                [1, 16, 1, 1],
-                [6, 24, 2, 2],
-                [6, 32, 3, 2],
-                [6, 64, 4, 2],
-                [6, 96, 3, 1],
-                [6, 160, 3, 2],
-                [6, 320, 1, 1],
-            ]
-
         in_channels = _make_divisible(in_channels * width_mult, round_nearest)
         last_channels = _make_divisible(last_channels * max(1.0, width_mult), round_nearest)
         
@@ -73,11 +72,11 @@ class MobileNetV2(nn.Module):
             ConvBNReLU(3, in_channels, stride = 2)
         ]
 
-        for t, c, n, s in inverted_residual_setting:
+        for t, c, n, s, p, d in inverted_residual_setting:
             out_channels = _make_divisible(c * width_mult, round_nearest)
             for i in range(n):
                 layers.append(
-                    InvertedResidual(in_channels, out_channels, s if i == 0 else 1, expand_ratio = t)
+                    InvertedResidual(in_channels, out_channels, stride = s, padding = p, dilation = d, expand_ratio = t)
                 )
                 in_channels = out_channels
         
