@@ -13,6 +13,9 @@ from models.with_mobilenet import PoseEstimationWithMobileNet
 from modules.keypoints import extract_keypoints, group_keypoints
 from modules.load_state import load_state
 
+PRETRAIN_PHASE = "pretrain"
+SEARCH_PHASE = "search"
+TUNE_PHASE = "tune"
 
 def run_coco_eval(gt_file_path, dt_file_path):
     annotation_type = 'keypoints'
@@ -110,30 +113,34 @@ def infer(net, img, scales, base_height, stride, pad_value=(0, 0, 0), img_mean=(
     return avg_heatmaps, avg_pafs
 
 
-def evaluate(labels, output_name, images_folder, net, multiscale=False, visualize=False):
-    net = net.cuda().eval()
+def evaluate(phase, labels, output_name, images_folder, net, multiscale=False, visualize=False):
+    net = net.cuda()
     base_height = 368
     scales = [1]
     if multiscale:
         scales = [0.5, 1.0, 1.5, 2.0]
     stride = 8
-
+    
     dataset = CocoValDataset(labels, images_folder)
     coco_result = []
     for sample in dataset:
+        if phase == PRETRAIN_PHASE:
+            net.sample_random_arch()
+        
         file_name = sample['file_name']
         img = sample['img']
         
         avg_heatmaps, avg_pafs = infer(net, img, scales, base_height, stride)
+        
         total_keypoints_num = 0
         all_keypoints_by_type = []
         for kpt_idx in range(18):  # 19th for bg
             total_keypoints_num += extract_keypoints(avg_heatmaps[:, :, kpt_idx], all_keypoints_by_type, total_keypoints_num)
         
         pose_entries, all_keypoints = group_keypoints(all_keypoints_by_type, avg_pafs)
-
+        
         coco_keypoints, scores = convert_to_coco_format(pose_entries, all_keypoints)
-
+        
         image_id = int(file_name[0:file_name.rfind('.')])
         for idx in range(len(coco_keypoints)):
             coco_result.append({
@@ -152,11 +159,14 @@ def evaluate(labels, output_name, images_folder, net, multiscale=False, visualiz
             key = cv2.waitKey()
             if key == 27:  # esc
                 return
-
+    
     with open(output_name, 'w') as f:
         json.dump(coco_result, f, indent=4)
 
     run_coco_eval(labels, output_name)
+    if phase == SEARCH_PHASE and net.latency_type is not None:
+        latency = nte.forward_latency.item()
+        print(f"\tlatency: {latency}")
 
 
 if __name__ == '__main__':
@@ -169,9 +179,9 @@ if __name__ == '__main__':
     parser.add_argument('--multiscale', action='store_true', help='average inference results over multiple scales')
     parser.add_argument('--visualize', action='store_true', help='show keypoints')
     args = parser.parse_args()
-
+    
     net = PoseEstimationWithMobileNet()
     checkpoint = torch.load(args.checkpoint_path)
     load_state(net, checkpoint)
-
+    
     evaluate(args.labels, args.output_name, args.images_folder, net, args.multiscale, args.visualize)
