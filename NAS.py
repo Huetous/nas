@@ -14,10 +14,15 @@ from modules.get_parameters import get_parameters_conv, get_parameters_bn, get_p
 from models.with_mobilenet import PoseEstimationWithMobileNet
 from modules.loss import l2_loss
 from modules.load_state import load_state, load_from_mobilenet, load_state_mnv2_pretrained
-from val import evaluate
-from jups.mobilenetv2 import SearchableMobileNetV2
+
+from jups.mobilenetv2 import MobileNetV2, InvertedResidual
 from torch_optimizer import RAdam
-from pruning_test_1 import build_model_with_search_variants
+from enot.models import SearchSpaceModel
+from enot_utils.schedulers import WarmupScheduler
+from enot.optimize import EnotPretrainOptimizer
+from enot.optimize import EnotSearchOptimizer
+from pruning import build_model_with_search_variants
+from val import evaluate
 
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)  # To prevent freeze of DataLoader
@@ -43,16 +48,11 @@ def NAS(phase, prepared_train_labels, train_images_folder, num_refinement_stages
                                                              Flip()]))
     train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     
-    if init:
-        net = MobileNetV2()
-        load_state_mnv2_pretrained(net)
-        net = PoseEstimationWithMobileNet(backbone = net.model, after_backbone_channels = 96)
-        net = build_model_with_search_variants(net, split_options_by_types={
-                                                      InvertedResidual: {'width_fractions': [1.0, 0.5, 1/6]}})
-    else:
-        net = SearchableMobileNetV2()
-        net = PoseEstimationWithMobileNet(backbone = net.model, after_backbone_channels = 96,
-                                      num_refinement_stages = num_refinement_stages)
+    net = MobileNetV2()
+    load_state_mnv2_pretrained(net)
+    net = PoseEstimationWithMobileNet(backbone = net.model, after_backbone_channels = 96)
+    net = build_model_with_search_variants(net, split_options_by_types={
+                                                  InvertedResidual: {'width_fractions': [1.0, 0.5, 1/6]}})
     
     if phase == PRETRAIN_PHASE:
         optimizer = optim.Adam([
@@ -72,16 +72,14 @@ def NAS(phase, prepared_train_labels, train_images_folder, num_refinement_stages
         ], lr=base_lr, weight_decay=5e-4)
     
     net = SearchSpaceModel(net).cuda()
+    scheduler = None
     if phase == PRETRAIN_PHASE:
         enot_optimizer = EnotPretrainOptimizer(search_space=net, optimizer=optimizer)
+        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200, 260], gamma=0.333)
+        scheduler = WarmupScheduler(scheduler, warmup_steps=len(train_loader) * 5)
     elif phase == SEARCH_PHASE:
         optimizer = RAdam(net.architecture_parameters(), lr=0.01, latency_type='mmac')
         enot_optimizer = EnotSearchOptimizer(net, optimizer)
-    
-    scheduler = None
-    if phase in PRETRAIN_PHASE:
-        drop_after_epoch = [100, 200, 260]
-        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=drop_after_epoch, gamma=0.333)
     
     if checkpoint_path:
         checkpoint = torch.load(checkpoint_path)
@@ -105,8 +103,8 @@ def NAS(phase, prepared_train_labels, train_images_folder, num_refinement_stages
     for epochId in range(current_epoch, 280):
         total_losses = [0, 0] * (num_refinement_stages + 1)  # heatmaps loss, paf loss per stage
         for batch_data in train_loader:
-            if phase == PRETRAIN_PHASE and not net.output_distribution_optimization_enabled:
-                net.initialize_output_distribution_optimization(inputs)
+            if phase == PRETRAIN_PHASE and not net.module.output_distribution_optimization_enabled:
+                net.module.initialize_output_distribution_optimization(batch_data["image"].cuda())
                     
             if phase == TUNE_PHASE:
                 optimizer.zero_grad()
@@ -135,17 +133,18 @@ def NAS(phase, prepared_train_labels, train_images_folder, num_refinement_stages
                 loss /= batches_per_iter
                 
                 if phase == SEARCH_PHASE and latency_loss_weight > 0.:
-                    loss += net.loss_latency_expectation * latency_loss_weight
+                    loss += net.module.loss_latency_expectation * latency_loss_weight
                 
                 loss.backward()
-                num_iter += 1
+                
                 
             if phase == TUNE_PHASE:
                 closure()
                 optimizer.step()
             else:
                 enot_optimizer.step(closure)
-
+            num_iter += 1
+            
             if scheduler is not None:
                 scheduler.step()
 
@@ -157,7 +156,7 @@ def NAS(phase, prepared_train_labels, train_images_folder, num_refinement_stages
                         loss_idx + 1, total_losses[loss_idx * 2] / log_after))
                 
                 if phase == SEARCH_PHASE:
-                    arch_probabilities = np.array(net.architecture_probabilities)
+                    arch_probabilities = np.array(net.module.architecture_probabilities)
                     print(f"\tarch_probabilities: {arch_probabilities}")
                 
                 for loss_idx in range(len(total_losses)):
@@ -174,7 +173,7 @@ def NAS(phase, prepared_train_labels, train_images_folder, num_refinement_stages
                 print('Validation...')
                 net.eval()
                 if phase == SEARCH_PHASE:
-                    net.sample_best_arch()
+                    net.module.sample_best_arch()
                 evaluate(phase, val_labels, val_output_name, val_images_folder, net)
                 net.train()
 
@@ -183,16 +182,16 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     
     parser.add_argument('--phase', type=str, required=True, help='phase of NAS')
-    parser.add_argument('--latency_loss_weight', type=float, defalut=0., help='weight of latency in the loss')
+    parser.add_argument('--latency_loss_weight', type=float, default=0., help='weight of latency in the loss')
     parser.add_argument('--prepared-train-labels', type=str, required=True,
                         help='path to the file with prepared annotations')
     parser.add_argument('--train-images-folder', type=str, required=True, help='path to COCO train images folder')
     parser.add_argument('--num-refinement-stages', type=int, default=1, help='number of refinement stages')
     parser.add_argument('--base-lr', type=float, default=4e-5, help='initial learning rate')
-    parser.add_argument('--batch-size', type=int, default=80, help='batch size')
+    parser.add_argument('--batch-size', type=int, default=50, help='batch size')
     parser.add_argument('--batches-per-iter', type=int, default=1, help='number of batches to accumulate gradient from')
     parser.add_argument('--num-workers', type=int, default=8, help='number of workers')
-    parser.add_argument('--checkpoint-path', type=str, required=True, help='path to the checkpoint to continue training from')
+    parser.add_argument('--checkpoint-path', type=str,  help='path to the checkpoint to continue training from')
     parser.add_argument('--from-mobilenet', action='store_true',
                         help='load weights from mobilenet feature extractor')
     parser.add_argument('--weights-only', action='store_true',
@@ -215,7 +214,7 @@ if __name__ == '__main__':
     if not os.path.exists(checkpoints_folder):
         os.makedirs(checkpoints_folder)
 
-    train(args.phase, args.prepared_train_labels, args.train_images_folder, args.num_refinement_stages, args.base_lr, args.batch_size,
+    NAS(args.phase, args.prepared_train_labels, args.train_images_folder, args.num_refinement_stages, args.base_lr, args.batch_size,
           args.batches_per_iter, args.num_workers, args.checkpoint_path, args.weights_only, args.from_mobilenet,
           checkpoints_folder, args.log_after, args.val_labels, args.val_images_folder, args.val_output_name,
           args.checkpoint_after, args.val_after, args.latency_loss_weight)

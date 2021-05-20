@@ -1,5 +1,5 @@
-import collections
-
+from collections import OrderedDict
+import torch
 
 def load_state(net, checkpoint):
     source_state = checkpoint['state_dict']

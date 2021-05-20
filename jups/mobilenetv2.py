@@ -1,7 +1,8 @@
 import torch.nn as nn
 # from enot.models import register_searchable_op
-# from searchable_mib import SearchableMobileInvertedBottleneck
-
+from jups.searchable_mib import SearchableMobileInvertedBottleneck
+from enot.models.operations import SearchVariantsContainer
+     
 class ConvBNReLU(nn.Sequential):
     def __init__(self, in_channels, out_channels, padding = None, stride = 1, dilation = 1, kernel_size = 3, groups = 1):
         if padding is None:
@@ -20,10 +21,10 @@ class ConvBNReLU(nn.Sequential):
 
 # @register_searchable_op("dilMIB")
 class InvertedResidual(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, dilation, padding, expand_ratio, kernel_size = 3):
+    def __init__(self, in_channels, out_channels, stride, dilation, padding, expand_ratio, kernel_size = 3, use_skip_connection = True):
         super().__init__()
         mid_channels = int(round(in_channels * expand_ratio))
-        self.use_skip_connection = stride == 1 and in_channels == out_channels
+        self.use_skip_connection = use_skip_connection and (stride == 1 and in_channels == out_channels)
         layers = []
         
         if expand_ratio > 1:

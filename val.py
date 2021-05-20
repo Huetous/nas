@@ -125,7 +125,7 @@ def evaluate(phase, labels, output_name, images_folder, net, multiscale=False, v
     coco_result = []
     for sample in dataset:
         if phase == PRETRAIN_PHASE:
-            net.sample_random_arch()
+            net.module.sample_random_arch()
         
         file_name = sample['file_name']
         img = sample['img']
@@ -165,7 +165,7 @@ def evaluate(phase, labels, output_name, images_folder, net, multiscale=False, v
 
     run_coco_eval(labels, output_name)
     if phase == SEARCH_PHASE and net.latency_type is not None:
-        latency = nte.forward_latency.item()
+        latency = net.forward_latency.item()
         print(f"\tlatency: {latency}")
 
 

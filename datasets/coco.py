@@ -6,7 +6,7 @@ import pickle
 
 import cv2
 import numpy as np
-import pycocotools
+from pycocotools.mask import frPyObjects, decode
 
 from torch.utils.data.dataset import Dataset
 
@@ -16,8 +16,8 @@ BODY_PARTS_KPT_IDS = [[1, 8], [8, 9], [9, 10], [1, 11], [11, 12], [12, 13], [1, 
 
 def get_mask(segmentations, mask):
     for segmentation in segmentations:
-        rle = pycocotools.mask.frPyObjects(segmentation, mask.shape[0], mask.shape[1])
-        mask[pycocotools.mask.decode(rle) > 0.5] = 0
+        rle = frPyObjects(segmentation, mask.shape[0], mask.shape[1])
+        mask[decode(rle) > 0.5] = 0
     return mask
 
 
